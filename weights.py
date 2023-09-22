@@ -121,11 +121,11 @@ class WeightsDownloadCache:
         # )
         try:
             output = subprocess.check_output(["pget", url, "/tmp/weights.zip"], close_fds=True)
-            print(output)
+            print(output.decode())
             subprocess.check_output(["unzip", "-d", dest, "/tmp/weights.zip"], close_fds=True)
         except subprocess.CalledProcessError as e:
             # If download fails, clean up and re-raise exception
             print(e.output)
             self._rm_disk(dest)
             raise e
-        print(f"Downloaded weights in {time.time() - st} seconds")
+        print(f"Downloaded and unzipped weights in {time.time() - st:.4f} seconds")

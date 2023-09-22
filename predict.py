@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import subprocess
 import time
 from typing import List
 
@@ -19,13 +18,8 @@ from diffusers import (
     StableDiffusionPipeline,
     UniPCMultistepScheduler,
 )
-from diffusers.pipelines.stable_diffusion.safety_checker import (
-    StableDiffusionSafetyChecker,
-)
 from diffusers.utils import load_image
-from PIL import Image
 from tqdm.auto import tqdm
-from transformers import CLIPFeatureExtractor
 from weights import WeightsDownloadCache
 
 SAFETY_MODEL_CACHE = "diffusers-cache"
@@ -63,29 +57,24 @@ SCHEDULERS = {
 
 
 class Predictor(BasePredictor):
-    def setup(self):
-        self.safety_checker = StableDiffusionSafetyChecker.from_pretrained(
-            SAFETY_MODEL_ID,
-            cache_dir=SAFETY_MODEL_CACHE,
-            torch_dtype=torch.float16,
-            local_files_only=True,
-        ).to("cuda")
-        self.feature_extractor = CLIPFeatureExtractor.from_pretrained(
-            "openai/clip-vit-base-patch32", cache_dir=SAFETY_MODEL_CACHE
+    def setup(self) -> None:
+        self.safety_checker = torch.load(
+            f"{SAFETY_MODEL_CACHE}/safety_checker.pth", map_location="cuda:0"
+        )
+        self.feature_extractor = torch.load(
+            f"{SAFETY_MODEL_CACHE}/feature_extractor.pth", map_location="cuda:0"
         )
         self.weights_cache = WeightsDownloadCache()
         self.url = None
 
-    def load_weights(self, url):
+    def load_weights(self, url: str) -> None:
         """Load the model into memory to make running multiple predictions efficient"""
         print("Loading Safety pipeline...")
 
         if url == self.url:
             return
 
-        start_time = time.time()
         weights_folder = self.weights_cache.ensure(url)
-        print("Downloaded weights in {time.time() - start_time:.2f} seconds")
 
         start_time = time.time()
         print("Loading SD pipeline...")
@@ -105,13 +94,13 @@ class Predictor(BasePredictor):
             safety_checker=self.txt2img_pipe.safety_checker,
             feature_extractor=self.txt2img_pipe.feature_extractor,
         ).to("cuda")
-        print("Loaded pipelines in {:.2f} seconds".format(time.time() - start_time))
+        print(f"Loaded pipelines in {time.time() - start_time:.2f} seconds")
 
         self.txt2img_pipe.set_progress_bar_config(disable=True)
         self.img2img_pipe.set_progress_bar_config(disable=True)
         self.url = url
 
-    def generate_images(self, images, output_dir):
+    def generate_images(self, images: list[dict], output_dir: str) -> None:
         with torch.autocast("cuda"), torch.inference_mode():
             for info in tqdm(images, desc="Generating samples"):
                 inputs = info.get("input") or info.get("inputs")
@@ -156,10 +145,7 @@ class Predictor(BasePredictor):
 
                 seed = int(inputs.get("seed", int.from_bytes(os.urandom(2), "big")))
                 generator = torch.Generator("cuda").manual_seed(seed)
-                output = pipeline(
-                    generator=generator,
-                    **kwargs,
-                )
+                output = pipeline(generator=generator, **kwargs)
 
                 for i, image in enumerate(output.images):
                     if output.nsfw_content_detected and output.nsfw_content_detected[i]:
@@ -178,11 +164,11 @@ class Predictor(BasePredictor):
         ),
     ) -> List[Path]:
         """Run a single prediction on the model"""
-
-        weights = weights.replace(
-            "https://replicate.delivery/pbxt/",
-            "https://storage.googleapis.com/replicate-files/",
-        )
+        # this is only suitable if running on GCP
+        # weights = weights.replace(
+        #     "https://replicate.delivery/pbxt/",
+        #     "https://storage.googleapis.com/replicate-files/",
+        # )
 
         images_json = json.loads(images)
 
