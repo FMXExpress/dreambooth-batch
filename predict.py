@@ -1,14 +1,13 @@
-import time
-import os
-from typing import List
 import json
+import os
+import shutil
+import subprocess
+import time
+from typing import List
 
-from tqdm.auto import tqdm
 import torch
 from cog import BasePredictor, Input, Path
 from diffusers import (
-    StableDiffusionPipeline,
-    StableDiffusionImg2ImgPipeline,
     DDIMScheduler,
     DPMSolverMultistepScheduler,
     EulerAncestralDiscreteScheduler,
@@ -16,16 +15,18 @@ from diffusers import (
     HeunDiscreteScheduler,
     LMSDiscreteScheduler,
     PNDMScheduler,
+    StableDiffusionImg2ImgPipeline,
+    StableDiffusionPipeline,
     UniPCMultistepScheduler,
 )
 from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
-from PIL import Image
-from transformers import CLIPFeatureExtractor
-import shutil
-import subprocess
 from diffusers.utils import load_image
+from PIL import Image
+from tqdm.auto import tqdm
+from transformers import CLIPFeatureExtractor
+from weights import WeightsDownloadCache
 
 SAFETY_MODEL_CACHE = "diffusers-cache"
 SAFETY_MODEL_ID = "CompVis/stable-diffusion-safety-checker"
@@ -72,33 +73,8 @@ class Predictor(BasePredictor):
         self.feature_extractor = CLIPFeatureExtractor.from_pretrained(
             "openai/clip-vit-base-patch32", cache_dir=SAFETY_MODEL_CACHE
         )
+        self.weights_cache = WeightsDownloadCache()
         self.url = None
-
-
-    def download_tar_weights(self, url):
-        """Download the model weights from the given URL"""
-        print("Downloading weights...")
-
-        if os.path.exists("weights"):
-            shutil.rmtree("weights")
-        os.makedirs("weights")
-        subprocess.check_output(["script/get_weights.sh", url], stderr=subprocess.STDOUT)
-
-    def download_zip_weights_python(self, url):
-        """Download the model weights from the given URL"""
-        print("Downloading weights...")
-   
-        if os.path.exists("weights"):
-            shutil.rmtree("weights")
-        os.makedirs("weights")
-
-        import zipfile
-        from io import BytesIO
-        import urllib.request
-
-        url = urllib.request.urlopen(url)
-        with zipfile.ZipFile(BytesIO(url.read())) as zf:
-            zf.extractall("weights")
 
     def load_weights(self, url):
         """Load the model into memory to make running multiple predictions efficient"""
@@ -108,13 +84,13 @@ class Predictor(BasePredictor):
             return
 
         start_time = time.time()
-        self.download_zip_weights_python(url)
-        print("Downloaded weights in {:.2f} seconds".format(time.time() - start_time))
+        weights_folder = self.weights_cache.ensure(url)
+        print("Downloaded weights in {time.time() - start_time:.2f} seconds")
 
         start_time = time.time()
         print("Loading SD pipeline...")
         self.txt2img_pipe = StableDiffusionPipeline.from_pretrained(
-            "weights",
+            weights_folder,
             safety_checker=self.safety_checker,
             feature_extractor=self.feature_extractor,
             torch_dtype=torch.float16,
@@ -146,14 +122,18 @@ class Predictor(BasePredictor):
 
                 kwargs = {
                     "prompt": [inputs["prompt"]] * num_outputs,
-                    "num_inference_steps": int(inputs.get("num_inference_steps", DEFAULT_NUM_INFERENCE_STEPS)),
-                    "guidance_scale": float(inputs.get("guidance_scale", DEFAULT_GUIDANCE_SCALE)),
+                    "num_inference_steps": int(
+                        inputs.get("num_inference_steps", DEFAULT_NUM_INFERENCE_STEPS)
+                    ),
+                    "guidance_scale": float(
+                        inputs.get("guidance_scale", DEFAULT_GUIDANCE_SCALE)
+                    ),
                 }
 
                 image = inputs.get("image")
                 if image is not None:
-                    kwargs['image'] = load_image(image)
-                    kwargs['strength'] = float(inputs.get('strength', DEFAULT_STRENGTH))
+                    kwargs["image"] = load_image(image)
+                    kwargs["strength"] = float(inputs.get("strength", DEFAULT_STRENGTH))
                     pipeline = self.img2img_pipe
                 else:
                     pipeline = self.txt2img_pipe
@@ -165,7 +145,9 @@ class Predictor(BasePredictor):
                     kwargs["negative_prompt"] = [negative_prompt] * num_outputs
 
                 scheduler = inputs.get("scheduler", DEFAULT_SCHEDULER)
-                pipeline.scheduler = SCHEDULERS[scheduler].from_config(pipeline.scheduler.config)
+                pipeline.scheduler = SCHEDULERS[scheduler].from_config(
+                    pipeline.scheduler.config
+                )
 
                 if bool(inputs.get("disable_safety_check", False)):
                     pipeline.safety_checker = None
@@ -185,7 +167,6 @@ class Predictor(BasePredictor):
                         continue
                     image.save(os.path.join(output_dir, f"{name}-{i}.png"))
 
-
     @torch.inference_mode()
     def predict(
         self,
@@ -198,10 +179,13 @@ class Predictor(BasePredictor):
     ) -> List[Path]:
         """Run a single prediction on the model"""
 
-        weights = weights.replace("https://replicate.delivery/pbxt/", "https://storage.googleapis.com/replicate-files/")
+        weights = weights.replace(
+            "https://replicate.delivery/pbxt/",
+            "https://storage.googleapis.com/replicate-files/",
+        )
 
         images_json = json.loads(images)
-    
+
         if weights is None:
             raise ValueError("No weights provided")
         self.load_weights(weights)
