@@ -13,4 +13,6 @@ build:
     - "unzip"
   run:
     - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/download/v0.0.3/pget" && chmod +x /usr/local/bin/pget
+    - curl -LO http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb && dpkg -i libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+    - curl -LO https://github.com/google/ripunzip/releases/download/v0.4.0/ripunzip_0.4.0_amd64.deb && dpkg -i ripunzip_0.4.0_amd64.deb
 predict: "predict.py:Predictor"
