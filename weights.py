@@ -120,6 +120,8 @@ class WeightsDownloadCache:
         #     "replicate.delivery/pbxt", "replicate-files.object.lga1.coreweave.com"
         # )
         try:
+            if os.path.isfile("/tmp/weights.zip"):
+                os.remove("/tmp/weights.zip")
             output = subprocess.check_output(["pget", url, "/tmp/weights.zip"], close_fds=True)
             print(output.decode())
             subprocess.check_output(["unzip", "-d", dest, "/tmp/weights.zip"], close_fds=True)
